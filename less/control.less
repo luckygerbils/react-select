@@ -3,7 +3,7 @@
 // ------------------------------
 
 .Select {
-	position: relative;
+	display: inline-block;
 
 	// preferred box model
 	&,
@@ -76,15 +76,11 @@
 // placeholder
 
 .Select-placeholder {
-	bottom: 0;
 	color: @select-input-placeholder;
-	left: 0;
 	line-height: @select-input-internal-height;
 	padding-left: @select-padding-horizontal;
 	padding-right: @select-padding-horizontal;
-	position: absolute;
-	right: 0;
-	top: 0;
+	margin-bottom: -@select-input-internal-height;
 
 	// crop text
 	max-width: 100%;
@@ -101,11 +97,8 @@
 
 .Select-value {
 	color: @select-input-placeholder;
-	left: 0;
-	padding: @select-padding-vertical 52px @select-padding-vertical @select-padding-horizontal;
-	position: absolute;
-	right: -(@select-arrow-width + @select-padding-horizontal);
-	top: 0;
+	padding: @select-padding-vertical @select-padding-horizontal;
+	margin-bottom: -@select-input-internal-height;
 
 	// crop text
 	max-width: 100%;

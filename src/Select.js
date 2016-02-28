@@ -12,6 +12,20 @@ var Option = require('./Option');
 
 var requestId = 0;
 
+var getScrollbarWidth = function() {
+	var scrollbarWidth;
+	return function() {
+		if (!scrollbarWidth) {
+			var measurer = document.createElement("div");
+			measurer.setAttribute("style", "width: 100px; height: 100px; overflow: scroll; position: absolute; top: -9999px");
+			document.body.appendChild(measurer);
+			scrollbarWidth = measurer.offsetWidth - measurer.clientWidth;
+			document.body.removeChild(measurer);
+		}
+		return scrollbarWidth;
+	}
+}();
+
 var Select = React.createClass({
 
 	displayName: 'Select',
@@ -158,6 +172,14 @@ var Select = React.createClass({
 		if (this.props.asyncOptions && this.props.autoload) {
 			this.autoloadAsyncOptions();
 		}
+
+		// Resize based on initial selection
+		var menuDOM = ReactDOM.findDOMNode(this.refs.selectMenuContainer);
+		var thisDOM = ReactDOM.findDOMNode(this);
+		var selectWidth = ReactDOM.findDOMNode(this).offsetWidth;
+		var maximumWidth = Math.max(menuDOM.offsetWidth + getScrollbarWidth(), selectWidth) + "px";
+		menuDOM.style.width = maximumWidth;
+		thisDOM.style.width = maximumWidth;
 	},
 
 	componentWillUnmount () {
@@ -192,7 +214,16 @@ var Select = React.createClass({
 		}
 	},
 
-	componentDidUpdate () {
+	componentWillUpdate(newProps, newState) {
+		if (this.state.values !== newState.values || this.props.multi !== newProps.multi) {
+			// Restore components to their default width when values change,
+			// allowing us to recalculate the proper maximum width.
+			ReactDOM.findDOMNode(this.refs.selectMenuContainer).style.width = "unset";
+			ReactDOM.findDOMNode(this).style.width = "unset";
+		}
+	},
+
+	componentDidUpdate (prevProps, prevState) {
 		if (!this.props.disabled && this._focusAfterUpdate) {
 			clearTimeout(this._blurTimeout);
 			clearTimeout(this._focusTimeout);
@@ -215,6 +246,16 @@ var Select = React.createClass({
 			}
 			this._focusedOptionReveal = false;
 		}
+
+		var menuContainerDOM = ReactDOM.findDOMNode(this.refs.selectMenuContainer);
+		var thisDOM = ReactDOM.findDOMNode(this);
+		var maximumWidth = Math.max(
+			/* Don't add the scrollbar width in multiple times */
+			menuContainerDOM.style.width === "unset" ?
+				menuContainerDOM.offsetWidth + getScrollbarWidth() : menuContainerDOM.offsetWidth,
+			thisDOM.offsetWidth) + "px"
+		menuContainerDOM.style.width = maximumWidth;
+		thisDOM.style.width = maximumWidth;
 	},
 
 	focus () {
@@ -855,20 +896,19 @@ var Select = React.createClass({
 			</span>
 		);
 
-		var menu;
-		var menuProps;
-		if (this.state.isOpen) {
-			menuProps = {
-				ref: 'menu',
-				className: 'Select-menu',
-				onMouseDown: this.handleMouseDownOnMenu
-			};
-			menu = (
-				<div ref="selectMenuContainer" className="Select-menu-outer">
-					<div {...menuProps}>{this.buildMenu()}</div>
-				</div>
-			);
-		}
+		var menuContainerProps = {
+			className: classes('Select-menu-outer', {"is-collapsed": !this.state.isOpen})
+		};
+		var menuProps = {
+			ref: 'menu',
+			className: 'Select-menu',
+			onMouseDown: this.handleMouseDownOnMenu
+		};
+		var menu = (
+			<div ref="selectMenuContainer" {...menuContainerProps}>
+				<div {...menuProps}>{this.buildMenu()}</div>
+			</div>
+		);
 
 		var input;
 		var inputProps = {
