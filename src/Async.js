@@ -1,154 +1,191 @@
-import React from 'react';
+// @flow
 
-import Select from './Select';
-import stripDiacritics from './utils/stripDiacritics';
+import React, {
+  Component,
+  type ElementConfig,
+  type AbstractComponent,
+  type ElementRef,
+} from 'react';
+import Select, { type Props as SelectProps } from './Select';
+import { handleInputChange } from './utils';
+import manageState from './stateManager';
+import type { OptionsType, InputActionMeta } from './types';
 
-let requestId = 0;
+export type AsyncProps = {
+  /* The default set of options to show before the user starts searching. When
+     set to `true`, the results for loadOptions('') will be autoloaded. */
+  defaultOptions: OptionsType | boolean,
+  /* Function that returns a promise, which is the set of options to be used
+     once the promise resolves. */
+  loadOptions: (string, (OptionsType) => void) => Promise<*> | void,
+  /* If cacheOptions is truthy, then the loaded data will be cached. The cache
+     will remain until `cacheOptions` changes value. */
+  cacheOptions: any,
+  onInputChange: (string, InputActionMeta) => void,
+  inputValue: string,
+};
 
-function initCache (cache) {
-	if (cache && typeof cache !== 'object') {
-		cache = {};
-	}
-	return cache ? cache : null;
-}
+export type Props = SelectProps & AsyncProps;
 
-function updateCache (cache, input, data) {
-	if (!cache) return;
-	cache[input] = data;
-}
+export const defaultProps = {
+  cacheOptions: false,
+  defaultOptions: false,
+  filterOption: null,
+};
 
-function getFromCache (cache, input) {
-	if (!cache) return;
-	for (let i = input.length; i >= 0; --i) {
-		let cacheKey = input.slice(0, i);
-		if (cache[cacheKey] && (input === cacheKey || cache[cacheKey].complete)) {
-			return cache[cacheKey];
-		}
-	}
-}
+type State = {
+  defaultOptions?: OptionsType,
+  inputValue: string,
+  isLoading: boolean,
+  loadedInputValue?: string,
+  loadedOptions: OptionsType,
+  passEmptyOptions: boolean,
+};
 
-function thenPromise (promise, callback) {
-	if (!promise || typeof promise.then !== 'function') return;
-	return promise.then((data) => {
-		callback(null, data);
-	}, (err) => {
-		callback(err);
-	});
-}
+export const makeAsyncSelect = <C: {}>(
+  SelectComponent: AbstractComponent<C>
+): AbstractComponent<C & AsyncProps> =>
+  class Async extends Component<C & AsyncProps, State> {
+    static defaultProps = defaultProps;
+    select: ElementRef<*>;
+    lastRequest: {};
+    mounted: boolean = false;
+    optionsCache: { [string]: OptionsType } = {};
+    constructor(props: C & AsyncProps) {
+      super();
+      this.state = {
+        defaultOptions: Array.isArray(props.defaultOptions)
+          ? props.defaultOptions
+          : undefined,
+        inputValue:
+          typeof props.inputValue !== 'undefined' ? props.inputValue : '',
+        isLoading: props.defaultOptions === true ? true : false,
+        loadedOptions: [],
+        passEmptyOptions: false,
+      };
+    }
+    componentDidMount() {
+      this.mounted = true;
+      const { defaultOptions } = this.props;
+      const { inputValue } = this.state;
+      if (defaultOptions === true) {
+        this.loadOptions(inputValue, options => {
+          if (!this.mounted) return;
+          const isLoading = !!this.lastRequest;
+          this.setState({ defaultOptions: options || [], isLoading });
+        });
+      }
+    }
+    componentWillReceiveProps(nextProps: C & AsyncProps) {
+      // if the cacheOptions prop changes, clear the cache
+      if (nextProps.cacheOptions !== this.props.cacheOptions) {
+        this.optionsCache = {};
+      }
+      if (nextProps.defaultOptions !== this.props.defaultOptions) {
+        this.setState({
+          defaultOptions: Array.isArray(nextProps.defaultOptions)
+            ? nextProps.defaultOptions
+            : undefined,
+        });
+      }
+    }
+    componentWillUnmount() {
+      this.mounted = false;
+    }
+    focus() {
+      this.select.focus();
+    }
+    blur() {
+      this.select.blur();
+    }
+    loadOptions(inputValue: string, callback: (?Array<*>) => void) {
+      const { loadOptions } = this.props;
+      if (!loadOptions) return callback();
+      const loader = loadOptions(inputValue, callback);
+      if (loader && typeof loader.then === 'function') {
+        loader.then(callback, () => callback());
+      }
+    }
+    handleInputChange = (newValue: string, actionMeta: InputActionMeta) => {
+      const { cacheOptions, onInputChange } = this.props;
+      // TODO
+      const inputValue = handleInputChange(newValue, actionMeta, onInputChange);
+      if (!inputValue) {
+        delete this.lastRequest;
+        this.setState({
+          inputValue: '',
+          loadedInputValue: '',
+          loadedOptions: [],
+          isLoading: false,
+          passEmptyOptions: false,
+        });
+        return;
+      }
+      if (cacheOptions && this.optionsCache[inputValue]) {
+        this.setState({
+          inputValue,
+          loadedInputValue: inputValue,
+          loadedOptions: this.optionsCache[inputValue],
+          isLoading: false,
+          passEmptyOptions: false,
+        });
+      } else {
+        const request = (this.lastRequest = {});
+        this.setState(
+          {
+            inputValue,
+            isLoading: true,
+            passEmptyOptions: !this.state.loadedInputValue,
+          },
+          () => {
+            this.loadOptions(inputValue, options => {
+              if (!this.mounted) return;
+              if (options) {
+                this.optionsCache[inputValue] = options;
+              }
+              if (request !== this.lastRequest) return;
+              delete this.lastRequest;
+              this.setState({
+                isLoading: false,
+                loadedInputValue: inputValue,
+                loadedOptions: options || [],
+                passEmptyOptions: false,
+              });
+            });
+          }
+        );
+      }
+      return inputValue;
+    };
+    render() {
+      const { loadOptions, ...props } = this.props;
+      const {
+        defaultOptions,
+        inputValue,
+        isLoading,
+        loadedInputValue,
+        loadedOptions,
+        passEmptyOptions,
+      } = this.state;
+      const options = passEmptyOptions
+        ? []
+        : inputValue && loadedInputValue
+        ? loadedOptions
+        : defaultOptions || [];
+      return (
+        <SelectComponent
+          {...props}
+          ref={ref => {
+            this.select = ref;
+          }}
+          options={options}
+          isLoading={isLoading}
+          onInputChange={this.handleInputChange}
+        />
+      );
+    }
+  };
 
-const stringOrNode = React.PropTypes.oneOfType([
-	React.PropTypes.string,
-	React.PropTypes.node
-]);
+const SelectState = manageState<ElementConfig<typeof Select>>(Select);
 
-const Async = React.createClass({
-	propTypes: {
-		cache: React.PropTypes.any,                     // object to use to cache results, can be null to disable cache
-		ignoreAccents: React.PropTypes.bool,            // whether to strip diacritics when filtering (shared with Select)
-		ignoreCase: React.PropTypes.bool,               // whether to perform case-insensitive filtering (shared with Select)
-		isLoading: React.PropTypes.bool,                // overrides the isLoading state when set to true
-		loadOptions: React.PropTypes.func.isRequired,   // function to call to load options asynchronously
-		loadingPlaceholder: React.PropTypes.string,     // replaces the placeholder while options are loading
-		minimumInput: React.PropTypes.number,           // the minimum number of characters that trigger loadOptions
-		noResultsText: React.PropTypes.string,          // placeholder displayed when there are no matching search results (shared with Select)
-		placeholder: stringOrNode,                      // field placeholder, displayed when there's no value (shared with Select)
-		searchPromptText: React.PropTypes.string,       // label to prompt for search input
-		searchingText: React.PropTypes.string,          // message to display while options are loading
-	},
-	getDefaultProps () {
-		return {
-			cache: true,
-			ignoreAccents: true,
-			ignoreCase: true,
-			loadingPlaceholder: 'Loading...',
-			minimumInput: 0,
-			searchingText: 'Searching...',
-			searchPromptText: 'Type to search',
-		};
-	},
-	getInitialState () {
-		return {
-			cache: initCache(this.props.cache),
-			isLoading: false,
-			options: [],
-		};
-	},
-	componentWillMount () {
-		this._lastInput = '';
-	},
-	componentDidMount () {
-		this.loadOptions('');
-	},
-	componentWillReceiveProps (nextProps) {
-		if (nextProps.cache !== this.props.cache) {
-			this.setState({
-				cache: initCache(nextProps.cache),
-			});
-		}
-	},
-	focus () {
-		this.refs.select.focus();
-	},
-	resetState () {
-		this._currentRequestId = -1;
-		this.setState({
-			isLoading: false,
-			options: [],
-		});
-	},
-	getResponseHandler (input) {
-		let _requestId = this._currentRequestId = requestId++;
-		return (err, data) => {
-			if (err) throw err;
-			if (!this.isMounted()) return;
-			updateCache(this.state.cache, input, data);
-			if (_requestId !== this._currentRequestId) return;
-			this.setState({
-				isLoading: false,
-				options: data && data.options || [],
-			});
-		};
-	},
-	loadOptions (input) {
-		if (this.props.ignoreAccents) input = stripDiacritics(input);
-		if (this.props.ignoreCase) input = input.toLowerCase();
-		this._lastInput = input;
-		if (input.length < this.props.minimumInput) {
-			return this.resetState();
-		}
-		let cacheResult = getFromCache(this.state.cache, input);
-		if (cacheResult) {
-			return this.setState({
-				options: cacheResult.options,
-			});
-		}
-		this.setState({
-			isLoading: true,
-		});
-		let responseHandler = this.getResponseHandler(input);
-		return thenPromise(this.props.loadOptions(input, responseHandler), responseHandler);
-	},
-	render () {
-		let { noResultsText } = this.props;
-		let { isLoading, options } = this.state;
-		if (this.props.isLoading) isLoading = true;
-		let placeholder = isLoading ? this.props.loadingPlaceholder : this.props.placeholder;
-		if (!options.length) {
-			if (this._lastInput.length < this.props.minimumInput) noResultsText = this.props.searchPromptText;
-			if (isLoading) noResultsText = this.props.searchingText;
-		}
-		return (
-			<Select
-				{...this.props}
-				ref="select"
-				isLoading={isLoading}
-				noResultsText={noResultsText}
-				onInputChange={this.loadOptions}
-				options={options}
-				placeholder={placeholder}
-				/>
-		);
-	}
-});
-
-module.exports = Async;
+export default makeAsyncSelect<ElementConfig<typeof SelectState>>(SelectState);
